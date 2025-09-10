@@ -1,6 +1,5 @@
 # 🎵 Pre-Save Project
 
-A successor to the original `web-audio-app` — evolving the standalone audio player into a pre-save platform for music releases.
 
 ## Overview
 - Keeps the original player as a module at `web-audio-app/`.
