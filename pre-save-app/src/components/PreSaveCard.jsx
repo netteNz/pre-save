@@ -165,8 +165,8 @@ function PreSaveCardPhoneInner({ artwork, title, artist, links }) {
 export const Demo = () => (
   <PreSaveCard
     artwork="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1280&auto=format&fit=crop"
-    title="The Love Song"
-    artist="Anastasia"
+    title="Song"
+    artist="Chris.Wave"
     links={[
       { brand: "Spotify", href: "https://open.spotify.com" },
       { brand: "Apple Music", href: "https://music.apple.com" },
