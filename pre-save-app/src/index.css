@@ -1,18 +1,20 @@
 @import "tailwindcss";
+@import "tailwindcss/utilities";
 
-/* Minimal baseline to center the app and avoid Vite defaults pushing content left */
-html, body, #root { height: 100%; }
+/* Viewport consistency */
+html, body, #root {
+  min-height: 100dvh;
+}
 
 body {
   margin: 0;
-  display: grid;          /* grid + place-items works in all modern browsers */
-  place-items: center;    /* centers the root both horizontally & vertically */
-  background: #000;       /* match card theme */
+  display: grid;
+  place-items: center;
+  background: #000;
   color: #fff;
 }
 
-/* Let the root span full width but keep a little breathing room */
 #root {
   width: 100%;
-  padding: 1rem;
 }
+

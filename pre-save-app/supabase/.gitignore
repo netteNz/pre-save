@@ -1,0 +1,14 @@
+# Supabase
+.branches
+.temp
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local
+
+# Real reward files for the local private bucket; never commit them
+seed-files/
+
+# Local Edge Function secrets
+functions/.env

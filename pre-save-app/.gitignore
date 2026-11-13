@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Gated reward files live under a secret-key folder; never commit them
+public/rewards/
+
+# Env files (only the examples are committed)
+.env
+.env.*
+!.env.example
