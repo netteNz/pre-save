@@ -19,7 +19,7 @@ import {
   sha256Hex,
   upsertFan,
 } from "../_shared/unlock.ts";
-import { escapeHtml, sendMail } from "../_shared/mail.ts";
+import { escapeHtml, mailConfigured, sendMail } from "../_shared/mail.ts";
 
 const CONFIRM_TTL_HOURS = 24;
 
@@ -39,6 +39,12 @@ Deno.serve(
     if (mode === "gate") {
       if (!campaign.gate_enabled) throw new HttpError(400, "Unlocking is closed for this release.");
       const gate = await findGate(campaign.id, "email");
+      // Without an email provider the fan would never get the link. Only local
+      // development may continue, by getting the link back in the response.
+      const devExposeLink = Deno.env.get("DEV_EXPOSE_CONFIRM_LINK") === "true";
+      if (!mailConfigured() && !devExposeLink) {
+        throw new HttpError(503, "Email unlock isn't available right now. Try another way to unlock.");
+      }
       const to = readEmail(body);
       const fanId = await upsertFan(campaign.id, to, body.consent === true, cleanSource(body.source));
 
@@ -65,8 +71,9 @@ Deno.serve(
 
       // Local development only: hand the link back so the flow can be tested
       // without an email provider. Never enable this in production.
-      const exposeLink = !sent && Deno.env.get("DEV_EXPOSE_CONFIRM_LINK") === "true";
-      return exposeLink ? { sent, devConfirmUrl: link } : { sent: true };
+      // sendMail() throws when the provider rejects the message, so !sent here
+      // means no provider is configured and dev mode is on (checked above).
+      return sent ? { sent: true } : { sent: false, devConfirmUrl: link };
     }
 
     if (mode === "confirm") {

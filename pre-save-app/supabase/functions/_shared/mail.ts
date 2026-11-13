@@ -4,6 +4,9 @@
 
 export type Mail = { to: string; subject: string; text: string; html: string };
 
+/** True when an email provider is configured and sendMail() will deliver. */
+export const mailConfigured = () => Boolean(Deno.env.get("RESEND_API_KEY") && Deno.env.get("MAIL_FROM"));
+
 export async function sendMail(mail: Mail): Promise<boolean> {
   const key = Deno.env.get("RESEND_API_KEY");
   const from = Deno.env.get("MAIL_FROM");

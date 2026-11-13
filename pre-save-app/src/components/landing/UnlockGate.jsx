@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createTimeline, stagger, utils } from "animejs";
 import { burst, prefersReducedMotion, seedFrom, track, withUtm } from "./utils";
 
@@ -40,8 +40,12 @@ const MiniLock = () => (
 
 /* ------------------------------------------------------- early listen */
 
-function EarlyListen({ src, seedId }) {
+function EarlyListen({ src, seedId, onRefresh }) {
   const audio = useRef(null);
+  // Set before the source is swapped for a fresh signed URL, so position and
+  // play state carry over once the new source has loaded.
+  const resume = useRef(null); // { time, play }
+  const retried = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -56,15 +60,41 @@ function EarlyListen({ src, seedId }) {
 
   const progress = duration ? time / duration : 0;
 
-  const toggle = () => {
+  const toggle = async () => {
     const el = audio.current;
     if (!el?.src) return;
-    if (el.paused) {
-      el.play();
-      track("early_listen_play");
-    } else {
+    if (!el.paused) {
       el.pause();
+      return;
     }
+    track("early_listen_play");
+    const time = el.currentTime;
+    if (await onRefresh?.()) {
+      resume.current = { time, play: true }; // new URL: play once it loads
+      return;
+    }
+    el.play().catch(() => {});
+  };
+
+  const onLoadedMetadata = (e) => {
+    const el = e.currentTarget;
+    setDuration(el.duration);
+    retried.current = false;
+    const r = resume.current;
+    if (!r) return;
+    resume.current = null;
+    el.currentTime = r.time;
+    if (r.play) el.play().catch(() => {});
+  };
+
+  // An expired signed URL fails the next range request (play, seek, buffer).
+  // Fetch a new one once and pick up where playback was.
+  const onError = (e) => {
+    if (!onRefresh || retried.current) return;
+    retried.current = true;
+    const el = e.currentTarget;
+    resume.current = { time: el.currentTime || time, play: !el.paused || playing };
+    onRefresh(true);
   };
 
   const seek = (e) => {
@@ -128,7 +158,8 @@ function EarlyListen({ src, seedId }) {
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedMetadata={onLoadedMetadata}
+        onError={onError}
       />
     </div>
   );
@@ -136,24 +167,51 @@ function EarlyListen({ src, seedId }) {
 
 /* ---------------------------------------------------------- rewards */
 
-// Fetches a short-lived signed URL for the early listen once unlocked.
+// Treat a signed URL as expired this long before its real expiry.
+const EXPIRY_MARGIN_MS = 30_000;
+
+// Fetches a short-lived signed URL for the early listen once unlocked, and
+// replaces it when it expires (before play, or after a media error).
 function ListenReward({ reward, unlock, seedId }) {
   const [src, setSrc] = useState(null);
   const [error, setError] = useState(null);
+  const link = useRef(null); // { url, expiresAt }
   const { rewardUrl } = unlock;
+
+  const load = useCallback(async () => {
+    const { url, expiresIn } = await rewardUrl(reward.id);
+    link.current = { url, expiresAt: Date.now() + (expiresIn ?? 900) * 1000 };
+    return url;
+  }, [rewardUrl, reward.id]);
 
   useEffect(() => {
     let cancelled = false;
-    rewardUrl(reward.id)
+    load()
       .then((url) => !cancelled && setSrc(url))
       .catch((err) => !cancelled && setError(err.message));
     return () => {
       cancelled = true;
     };
-  }, [rewardUrl, reward.id]);
+  }, [load]);
+
+  // Resolves to true when a new URL was set (the player then reloads).
+  const refresh = useCallback(
+    async (force = false) => {
+      const current = link.current;
+      if (!force && current && Date.now() < current.expiresAt - EXPIRY_MARGIN_MS) return false;
+      try {
+        setSrc(await load());
+        return true;
+      } catch (err) {
+        setError(err.message);
+        return false;
+      }
+    },
+    [load],
+  );
 
   if (error) return <p className="text-sm text-white/50">{error}</p>;
-  return <EarlyListen src={src} seedId={seedId} />;
+  return <EarlyListen src={src} seedId={seedId} onRefresh={refresh} />;
 }
 
 function DownloadReward({ reward, unlock }) {
@@ -164,7 +222,7 @@ function DownloadReward({ reward, unlock }) {
     setBusy(true);
     setError(null);
     try {
-      const url = await unlock.rewardUrl(reward.id);
+      const { url } = await unlock.rewardUrl(reward.id);
       track("reward_download", { reward: reward.id }, { remote: false }); // server logs it
       window.location.assign(url); // signed URL carries Content-Disposition: attachment
     } catch (err) {

@@ -204,12 +204,19 @@ export function useUnlock(campaign) {
     [run, campaignId, complete],
   );
 
-  /** Short-lived signed URL for one reward. Throws ApiError (e.g. 410 after release). */
+  /**
+   * Short-lived signed URL for one reward: { url, expiresIn } (seconds).
+   * Throws ApiError (e.g. 410 after release).
+   */
   const rewardUrl = useCallback(
     async (rewardId) => {
       try {
-        const { url } = await callFunction("reward-url", { campaign: campaignId, token: state.token, reward: rewardId });
-        return url;
+        const { url, expiresIn } = await callFunction("reward-url", {
+          campaign: campaignId,
+          token: state.token,
+          reward: rewardId,
+        });
+        return { url, expiresIn };
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           local.remove(storageKey(campaignId));
