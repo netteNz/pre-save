@@ -1,11 +1,14 @@
 /**
- * Campaign config: the only file you need to edit per release.
+ * Demo campaign and shape reference.
  *
- * Swap the copy, date, links and accent per campaign. Every outgoing link
- * gets the visitor's UTM params forwarded so attribution survives the hop
- * to the DSP / smart-link provider.
+ * Live campaigns come from the backend (get_public_campaign in
+ * supabase/migrations), which returns this same shape plus ids. This copy is
+ * used only when VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not set, and
+ * it mirrors supabase/seed.sql. The gate is off here: rewards are only ever
+ * served by the backend, per fan, through short-lived signed URLs.
  */
 export const campaign = {
+  id: "demo-low-tide", // stable id: storage keys, waveform seed, .ics UID
   artist: "Chris.Wave",
   title: "Low Tide",
   format: "New single", // "New single" | "EP" | "Album"
@@ -38,35 +41,19 @@ export const campaign = {
   // Optional 15–30s teaser clip. The waveform plays decoratively without it.
   teaserSrc: "",
 
-  // POST target for the email capture form ({ email, consent, campaign }).
-  // Leave empty during development; the form still shows its success state.
-  notifyEndpoint: "",
-
   /**
-   * Fan gate: "pre-save / follow to unlock".
-   *
-   * Spotify only lets approved apps act on fans' accounts at scale (since
-   * Feb 2026 self-built apps are capped at 5 allowlisted users), so the
-   * pre-save + follow runs on a provider that has that approval (Hypeddit
-   * Link Gate, Feature.fm, LabelGrid...). When the fan finishes, the
-   * provider sends them to our secret reward URL and the page unlocks.
-   *
-   * Setup per campaign:
-   *   1. node scripts/unlock-key.mjs
-   *   2. Put reward files in public/rewards/<KEY>/ (gitignored)
-   *   3. In the provider, set the reward / redirect URL to
-   *      https://<your-domain>/?unlock=<KEY>
-   *   4. Paste the gate link into providerUrl and the hash into keyHash.
-   *      Only the hash goes here, never the key.
+   * Fan gate (per-fan unlock). Configured in the database, not here:
+   *   gates   - provider redirect (?claim=), email, access code, paid (phase 2)
+   *   rewards - files in the private "rewards" storage bucket
+   * Provider secrets and access codes are stored only as hashes; generate
+   * them with `node scripts/campaign-secret.mjs`.
    */
   gate: {
-    enabled: true,
-    providerName: "Hypeddit",
-    providerUrl: "https://hypeddit.com",
-    keyHash: "65827ae3898db01d51cbba385a6f8412d52a106cdf55e4a7345fe1268b223879",
+    enabled: false,
+    gates: [{ type: "provider", config: { providerName: "Hypeddit", providerUrl: "https://hypeddit.com" } }],
     rewards: [
-      { type: "listen", title: "Full track, 3 weeks early", file: "early-listen.mp3", hideAfterRelease: true },
-      { type: "download", title: "Demo + stems (.zip)", file: "low-tide-extras.zip" },
+      { id: "demo-listen", type: "listen", title: "Full track, 3 weeks early", hideAfterRelease: true },
+      { id: "demo-download", type: "download", title: "Demo + stems (.zip)", hideAfterRelease: false },
     ],
   },
 

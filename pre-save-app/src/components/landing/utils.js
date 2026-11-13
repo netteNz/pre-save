@@ -1,4 +1,5 @@
 import { animate, utils } from "animejs";
+import { logEvent } from "../../lib/api";
 
 // Forward the visitor's utm_* params onto outgoing links so attribution
 // survives the jump from the landing page to the DSP.
@@ -18,10 +19,27 @@ export function withUtm(href) {
   }
 }
 
-// Pushes to GTM's dataLayer when present; no-op otherwise.
-export function track(event, data = {}) {
+let trackCampaignId = null;
+
+// Set once the campaign has loaded so track() can attribute events.
+export function setTrackCampaign(id) {
+  trackCampaignId = id;
+}
+
+// Pushes to GTM's dataLayer when present, and records the event against the
+// campaign so the artist sees the funnel. Pass { remote: false } for events
+// the server already records itself (unlocks, reward fetches, signups).
+export function track(event, data = {}, { remote = true } = {}) {
   if (typeof window === "undefined") return;
   (window.dataLayer = window.dataLayer || []).push({ event, ...data });
+  if (remote) logEvent(trackCampaignId, event, data);
+}
+
+// Stable numeric seed from a string id (for deterministic waveforms).
+export function seedFrom(id) {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return (h >>> 0) % 100000 || 1;
 }
 
 export function formatReleaseDate(date) {
@@ -34,7 +52,7 @@ export function formatReleaseDate(date) {
 
 // Release-day calendar reminder: one of the cheapest ways to convert a
 // pre-save visitor into a day-one stream.
-export function downloadIcs({ artist, title, date, url }) {
+export function downloadIcs({ id, artist, title, date, url }) {
   const stamp = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   const end = new Date(date.getTime() + 30 * 60 * 1000);
   const ics = [
@@ -42,7 +60,7 @@ export function downloadIcs({ artist, title, date, url }) {
     "VERSION:2.0",
     "PRODID:-//presave//EN",
     "BEGIN:VEVENT",
-    `UID:${stamp(date)}-${title.replace(/\W+/g, "")}@presave`,
+    `UID:${stamp(date)}-${id}@presave`,
     `DTSTAMP:${stamp(new Date())}`,
     `DTSTART:${stamp(date)}`,
     `DTEND:${stamp(end)}`,
@@ -89,9 +107,4 @@ export function burst(x, y, color) {
     ease: "outExpo",
     onComplete: () => layer.remove(),
   });
-}
-
-export async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

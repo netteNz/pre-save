@@ -1,6 +1,6 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createTimeline, stagger, utils } from "animejs";
-import { burst, prefersReducedMotion, track, withUtm } from "./utils";
+import { burst, prefersReducedMotion, seedFrom, track, withUtm } from "./utils";
 
 const fmt = (t) => {
   if (!Number.isFinite(t)) return "0:00";
@@ -40,24 +40,25 @@ const MiniLock = () => (
 
 /* ------------------------------------------------------- early listen */
 
-function EarlyListen({ src, title }) {
+function EarlyListen({ src, seedId }) {
   const audio = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
   const bars = useMemo(() => {
-    const rnd = utils.createSeededRandom(title.length * 131);
+    const rnd = utils.createSeededRandom(seedFrom(seedId) * 131);
     return Array.from({ length: 64 }, (_, i) => {
       const env = Math.sin(Math.PI * (i / 63)) * 0.6 + 0.4;
       return Math.max(0.15, (env * rnd(35, 100)) / 100);
     });
-  }, [title]);
+  }, [seedId]);
 
   const progress = duration ? time / duration : 0;
 
   const toggle = () => {
     const el = audio.current;
+    if (!el?.src) return;
     if (el.paused) {
       el.play();
       track("early_listen_play");
@@ -68,7 +69,7 @@ function EarlyListen({ src, title }) {
 
   const seek = (e) => {
     const el = audio.current;
-    if (!el.duration) return;
+    if (!el?.duration) return;
     const r = e.currentTarget.getBoundingClientRect();
     el.currentTime = utils.clamp((e.clientX - r.left) / r.width, 0, 1) * el.duration;
   };
@@ -121,7 +122,7 @@ function EarlyListen({ src, title }) {
       </div>
       <audio
         ref={audio}
-        src={src}
+        src={src || undefined}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
@@ -133,17 +134,218 @@ function EarlyListen({ src, title }) {
   );
 }
 
+/* ---------------------------------------------------------- rewards */
+
+// Fetches a short-lived signed URL for the early listen once unlocked.
+function ListenReward({ reward, unlock, seedId }) {
+  const [src, setSrc] = useState(null);
+  const [error, setError] = useState(null);
+  const { rewardUrl } = unlock;
+
+  useEffect(() => {
+    let cancelled = false;
+    rewardUrl(reward.id)
+      .then((url) => !cancelled && setSrc(url))
+      .catch((err) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [rewardUrl, reward.id]);
+
+  if (error) return <p className="text-sm text-white/50">{error}</p>;
+  return <EarlyListen src={src} seedId={seedId} />;
+}
+
+function DownloadReward({ reward, unlock }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const download = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const url = await unlock.rewardUrl(reward.id);
+      track("reward_download", { reward: reward.id }, { remote: false }); // server logs it
+      window.location.assign(url); // signed URL carries Content-Disposition: attachment
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy}
+        className="inline-flex items-center gap-3 rounded-full border border-white/20 px-5 py-3 text-sm transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+      >
+        <RewardIcon type="download" />
+        {busy ? "Preparing…" : "Download"}
+      </button>
+      {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------ gate UI */
+
+const inputCls =
+  "w-full rounded-full border border-white/15 bg-transparent px-5 py-3 text-sm text-white placeholder:text-white/30 focus:border-[var(--accent)] focus:outline-none";
+const primaryBtn =
+  "inline-flex items-center justify-center gap-3 rounded-full bg-[var(--accent)] px-6 py-3.5 font-medium text-black transition hover:brightness-110 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/40 disabled:opacity-50";
+const secondaryBtn =
+  "shrink-0 rounded-full border border-white/20 px-5 py-3 text-sm transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50";
+
+function Consent({ artist, checked, onChange }) {
+  return (
+    <label className="mt-3 flex items-start gap-3 text-xs text-white/50">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 accent-[var(--accent)]"
+      />
+      I agree to receive emails from {artist}. Unsubscribe anytime.
+    </label>
+  );
+}
+
+// Provider redirect landed here with ?claim=: one more step, an email.
+function ProviderFinish({ campaign, unlock }) {
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  return (
+    <form
+      className="mt-6"
+      onSubmit={(e) => {
+        e.preventDefault();
+        unlock.claimProvider({ email, consent });
+      }}
+    >
+      <p className="text-white/60">Almost there. Enter your email to unlock your copy.</p>
+      <label className="sr-only" htmlFor="gate-provider-email">Email</label>
+      <input
+        id="gate-provider-email"
+        type="email"
+        required
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@email.com"
+        className={`${inputCls} mt-4`}
+      />
+      <Consent artist={campaign.artist} checked={consent} onChange={setConsent} />
+      <button type="submit" disabled={unlock.busy} className={`${primaryBtn} mt-5`}>
+        <MiniLock />
+        {unlock.busy ? "Unlocking…" : "Unlock now"}
+      </button>
+    </form>
+  );
+}
+
+function EmailGate({ campaign, unlock, label }) {
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [sent, setSent] = useState(null);
+
+  if (sent) {
+    return (
+      <div className="mt-6 rounded-2xl border border-white/10 p-4 text-sm">
+        <p className="text-white/85">Check your inbox for a link to unlock {campaign.title}.</p>
+        {sent.devConfirmUrl && (
+          <p className="mt-2 break-all text-xs text-white/40">
+            Dev mode, no email provider: <a href={sent.devConfirmUrl} className="underline">{sent.devConfirmUrl}</a>
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className="mt-6"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const res = await unlock.claimEmail({ email, consent });
+        if (res) {
+          track("gate_email_submit", {}, { remote: false }); // server logs it
+          setSent(res);
+        }
+      }}
+    >
+      <p className="text-sm text-white/60">{label}</p>
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+        <label className="sr-only" htmlFor="gate-email">Email</label>
+        <input
+          id="gate-email"
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@email.com"
+          className={inputCls}
+        />
+        <button type="submit" disabled={unlock.busy} className={secondaryBtn}>
+          {unlock.busy ? "Sending…" : "Email me a link"}
+        </button>
+      </div>
+      <Consent artist={campaign.artist} checked={consent} onChange={setConsent} />
+    </form>
+  );
+}
+
+function CodeGate({ unlock }) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mt-5 block text-sm text-white/50 underline underline-offset-4 hover:text-white">
+        Have an access code?
+      </button>
+    );
+  }
+  return (
+    <form
+      className="mt-5 flex flex-col gap-3 sm:flex-row"
+      onSubmit={(e) => {
+        e.preventDefault();
+        unlock.claimCode({ code });
+      }}
+    >
+      <label className="sr-only" htmlFor="gate-code">Access code</label>
+      <input
+        id="gate-code"
+        required
+        autoComplete="off"
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        placeholder="ACCESS-CODE"
+        className={`${inputCls} font-mono uppercase`}
+      />
+      <button type="submit" disabled={unlock.busy} className={secondaryBtn}>
+        {unlock.busy ? "Checking…" : "Unlock"}
+      </button>
+    </form>
+  );
+}
+
 /* --------------------------------------------------------------- gate */
 
 export default function UnlockGate({ campaign, isOut, unlock }) {
   const { gate } = campaign;
   const root = useRef(null);
-  const { unlocked, key, fresh, error } = unlock;
+  const { unlocked, fresh, error, pendingClaim } = unlock;
   const rewards = gate.rewards.filter((r) => !(isOut && r.hideAfterRelease));
-  const provider = gate.providerName || "our pre-save partner";
-  const rewardUrl = (file) => `/rewards/${encodeURIComponent(key)}/${encodeURIComponent(file)}`;
+  const byType = (t) => gate.gates.find((g) => g.type === t);
+  const providerGate = byType("provider");
+  const emailGate = byType("email");
+  const codeGate = byType("code");
+  const provider = providerGate?.config?.providerName || "our pre-save partner";
 
-  // Reveal sequence when the fan lands back here from the provider.
+  // Reveal sequence when the fan unlocks on this visit.
   useLayoutEffect(() => {
     if (!unlocked || !fresh) return;
     const el = root.current;
@@ -163,6 +365,13 @@ export default function UnlockGate({ campaign, isOut, unlock }) {
       .add(".gate-item", { opacity: [0, 1], y: [16, 0], delay: stagger(90), duration: 900 }, 1000);
     return () => tl.revert();
   }, [unlocked, fresh, campaign.accent]);
+
+  // Bring the "one more step" form into view when returning from the provider.
+  useEffect(() => {
+    if (pendingClaim && !unlocked) {
+      root.current?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+    }
+  }, [pendingClaim, unlocked]);
 
   return (
     <section id="unlock" ref={root} className="reveal relative z-10 mx-auto max-w-5xl scroll-mt-24 px-5 py-16 sm:px-8">
@@ -201,11 +410,13 @@ export default function UnlockGate({ campaign, isOut, unlock }) {
           {!unlocked && (
             <>
               <p className="mt-3 text-white/60">
-                Pre-save {campaign.title} and follow {campaign.artist} to unlock:
+                {providerGate
+                  ? `Pre-save ${campaign.title} and follow ${campaign.artist} to unlock:`
+                  : `Unlock ${campaign.title} early:`}
               </p>
               <ul className="mt-5 space-y-2.5">
                 {rewards.map((r) => (
-                  <li key={r.file} className="flex items-center gap-3 text-white/85">
+                  <li key={r.id} className="flex items-center gap-3 text-white/85">
                     <span className="grid h-8 w-8 place-items-center rounded-full border border-white/15 text-white/60">
                       <RewardIcon type={r.type} />
                     </span>
@@ -217,53 +428,69 @@ export default function UnlockGate({ campaign, isOut, unlock }) {
                 ))}
               </ul>
 
-              <ol className="mt-7 grid grid-cols-3 gap-2 text-[11px] leading-snug text-white/50">
-                {["Connect Spotify or Apple Music", "Pre-save + follow", "Come back unlocked"].map((s, i) => (
-                  <li key={s} className="border-t border-white/15 pt-2">
-                    <span className="font-mono text-white/80">0{i + 1}</span>
-                    <br />
-                    {s}
-                  </li>
-                ))}
-              </ol>
+              {pendingClaim && providerGate ? (
+                <ProviderFinish campaign={campaign} unlock={unlock} />
+              ) : (
+                <>
+                  {providerGate && (
+                    <>
+                      <ol className="mt-7 grid grid-cols-3 gap-2 text-[11px] leading-snug text-white/50">
+                        {["Connect Spotify or Apple Music", "Pre-save + follow", "Come back unlocked"].map((s, i) => (
+                          <li key={s} className="border-t border-white/15 pt-2">
+                            <span className="font-mono text-white/80">0{i + 1}</span>
+                            <br />
+                            {s}
+                          </li>
+                        ))}
+                      </ol>
+                      <a
+                        href={withUtm(providerGate.config.providerUrl)}
+                        onClick={() => track("gate_start")}
+                        className={`${primaryBtn} mt-7`}
+                      >
+                        <MiniLock />
+                        Pre-save to unlock
+                      </a>
+                    </>
+                  )}
+                  {emailGate && (
+                    <EmailGate
+                      campaign={campaign}
+                      unlock={unlock}
+                      label={providerGate ? "No streaming account? Unlock with your email instead." : "Unlock with your email."}
+                    />
+                  )}
+                  {codeGate && <CodeGate unlock={unlock} />}
+                </>
+              )}
 
-              <a
-                href={withUtm(gate.providerUrl)}
-                onClick={() => track("gate_start")}
-                className="mt-7 inline-flex items-center gap-3 rounded-full bg-[var(--accent)] px-6 py-3.5 font-medium text-black transition hover:brightness-110 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/40"
-              >
-                <MiniLock />
-                Pre-save to unlock
-              </a>
-              {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-              <p className="mt-4 text-xs text-white/35">
-                Verified by {provider}. We never see your password.
-              </p>
+              {error && (
+                <p role="alert" className="mt-3 text-sm text-red-300">
+                  {error}
+                </p>
+              )}
+              {providerGate && (
+                <p className="mt-4 text-xs text-white/35">
+                  Pre-saves are verified by {provider}. We never see your password.
+                </p>
+              )}
             </>
           )}
 
           {unlocked && (
             <div className="mt-6 space-y-5">
               {rewards.map((r) => (
-                <div key={r.file} className="gate-item">
+                <div key={r.id} className="gate-item">
                   <p className="mb-2 text-xs uppercase tracking-[0.2em] text-white/45">{r.title}</p>
                   {r.type === "listen" ? (
-                    <EarlyListen src={rewardUrl(r.file)} title={campaign.title} />
+                    <ListenReward reward={r} unlock={unlock} seedId={campaign.id} />
                   ) : (
-                    <a
-                      href={rewardUrl(r.file)}
-                      download
-                      onClick={() => track("reward_download", { file: r.file })}
-                      className="inline-flex items-center gap-3 rounded-full border border-white/20 px-5 py-3 text-sm transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                    >
-                      <RewardIcon type="download" />
-                      Download
-                    </a>
+                    <DownloadReward reward={r} unlock={unlock} />
                   )}
                 </div>
               ))}
               <p className="gate-item text-xs text-white/35">
-                Early listen is for you. Please don't share the link.
+                This unlock is yours alone. Please don't share it.
               </p>
             </div>
           )}

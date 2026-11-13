@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   animate,
   createAnimatable,
@@ -12,7 +12,8 @@ import { useCountdown } from "./useCountdown";
 import PlatformIcon from "./PlatformIcon";
 import UnlockGate from "./UnlockGate";
 import { useUnlock } from "./useUnlock";
-import { burst, downloadIcs, formatReleaseDate, prefersReducedMotion, track, withUtm } from "./utils";
+import { burst, downloadIcs, formatReleaseDate, prefersReducedMotion, seedFrom, setTrackCampaign, track, withUtm } from "./utils";
+import { ApiError, backendConfigured, callFunction, utmSource } from "../../lib/api";
 import "./landing.css";
 
 const BAR_COUNT = 56;
@@ -45,8 +46,10 @@ export default function PreSaveLanding({ campaign }) {
   const releaseDate = useMemo(() => new Date(campaign.releaseDate), [campaign.releaseDate]);
   const countdown = useCountdown(releaseDate);
   const isOut = countdown.done;
-  const gateOn = Boolean(campaign.gate?.enabled);
-  const unlock = useUnlock(campaign.gate, campaign.title);
+  const unlock = useUnlock(campaign);
+  const gateOn = unlock.enabled;
+
+  useEffect(() => setTrackCampaign(campaign.id), [campaign.id]);
 
   const [primary, ...others] = useMemo(() => {
     const list = [...campaign.platforms];
@@ -60,17 +63,19 @@ export default function PreSaveLanding({ campaign }) {
   const [email, setEmail] = useState("");
   const [consent, setConsent] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
+  const [subscribeError, setSubscribeError] = useState(null);
+  const [subscribing, setSubscribing] = useState(false);
   const [shareLabel, setShareLabel] = useState("Share");
 
   // Deterministic waveform silhouette so it doesn't jump between renders.
   const bars = useMemo(() => {
-    const rnd = utils.createSeededRandom(campaign.title.length * 97);
+    const rnd = utils.createSeededRandom(seedFrom(campaign.id) * 97);
     return Array.from({ length: BAR_COUNT }, (_, i) => {
       const t = i / (BAR_COUNT - 1);
       const envelope = Math.sin(Math.PI * t) * 0.7 + 0.3;
       return Math.max(0.12, envelope * rnd(40, 100) / 100);
     });
-  }, [campaign.title]);
+  }, [campaign.id]);
 
   /* ------------------------------------------------------ anime.js scope */
   useLayoutEffect(() => {
@@ -217,17 +222,21 @@ export default function PreSaveLanding({ campaign }) {
     }
   };
 
+  // Release-day signup lands in the same fans table as the email gate.
+  // Success is shown only when the server actually saved it.
   const subscribe = async (e) => {
     e.preventDefault();
-    track("notify_signup");
-    if (campaign.notifyEndpoint) {
-      await fetch(campaign.notifyEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, consent, campaign: campaign.title }),
-      }).catch(() => {});
+    setSubscribeError(null);
+    setSubscribing(true);
+    try {
+      await callFunction("claim-email", { mode: "notify", campaign: campaign.id, email, consent, source: utmSource() });
+      track("notify_signup", {}, { remote: false }); // server logs it
+      setSubscribed(true);
+    } catch (err) {
+      setSubscribeError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setSubscribing(false);
     }
-    setSubscribed(true);
   };
 
   const ctaLabel = (p) => (isOut ? "Listen" : p.action);
@@ -411,7 +420,7 @@ export default function PreSaveLanding({ campaign }) {
       </section>
 
       {/* Release-day notification: own the fan relationship */}
-      {!isOut && (
+      {!isOut && backendConfigured && (
         <section className="reveal relative z-10 mx-auto max-w-3xl px-5 pb-28 sm:px-8">
           <div className="reveal-item rounded-2xl border border-white/10 bg-white/[0.03] p-6 sm:p-10">
             {subscribed ? (
@@ -438,9 +447,10 @@ export default function PreSaveLanding({ campaign }) {
                   />
                   <button
                     type="submit"
-                    className="rounded-full bg-white px-6 py-3.5 font-medium text-black transition hover:bg-[var(--accent)]"
+                    disabled={subscribing}
+                    className="rounded-full bg-white px-6 py-3.5 font-medium text-black transition hover:bg-[var(--accent)] disabled:opacity-50"
                   >
-                    Notify me
+                    {subscribing ? "Saving…" : "Notify me"}
                   </button>
                 </div>
                 <label className="mt-4 flex items-start gap-3 text-xs text-white/50">
@@ -453,6 +463,11 @@ export default function PreSaveLanding({ campaign }) {
                   />
                   I agree to receive emails from {campaign.artist}. Unsubscribe anytime.
                 </label>
+                {subscribeError && (
+                  <p role="alert" className="mt-3 text-sm text-red-300">
+                    {subscribeError}
+                  </p>
+                )}
               </form>
             )}
           </div>
@@ -512,7 +527,7 @@ function Confirmation({ campaign, releaseDate, shareLabel, onShare, onClose, gat
               <p className="sheet-item mt-2 text-sm text-white/60">
                 Want it early?{" "}
                 <a href="#unlock" onClick={onClose} className="text-[var(--accent)] underline underline-offset-4">
-                  Finish on {campaign.gate.providerName || "the pre-save page"} to unlock your early listen
+                  Unlock your early listen
                 </a>
                 .
               </p>
@@ -528,7 +543,7 @@ function Confirmation({ campaign, releaseDate, shareLabel, onShare, onClose, gat
           <button
             onClick={() => {
               track("calendar_add");
-              downloadIcs({ artist: campaign.artist, title: campaign.title, date: releaseDate, url: window.location.href });
+              downloadIcs({ id: campaign.id, artist: campaign.artist, title: campaign.title, date: releaseDate, url: window.location.href });
             }}
             className="rounded-full bg-white px-5 py-3 text-sm font-medium text-black transition hover:bg-[var(--accent)]"
           >
