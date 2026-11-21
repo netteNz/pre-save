@@ -4,7 +4,7 @@ applyTo: "pre-save-app/supabase/functions/**"
 
 # Edge Function review
 
-- Every public function must be wrapped in `handle()` from `_shared/http.ts`. Read input only through `str`, `optStr` and `email`, with an explicit max length.
+- Every public function must be wrapped in `handle()` from `_shared/http.ts`. Read string fields only through `str`, `optStr` and `email`, with an explicit max length. Check other types directly: booleans with `=== true`, objects through an allowlist sanitizer like `cleanSource()`.
 - Every `claim-*` function must call `rateLimit()` immediately after `loadCampaign()` (it needs the campaign id), before any other lookup or write.
 - `clientIp()` trusts spoofable headers (`cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`). Flag any new use of these headers for auth, allowlisting or anything beyond rate-limit keys.
 - `db()` is the service-role client. It must stay server-side; never return its key, raw rows with hashes, or storage paths to the caller.
