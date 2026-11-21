@@ -71,7 +71,10 @@ Pending (needs a running Supabase or a decision):
 
 - [ ] Apply migrations and seed (`supabase start` or `supabase db reset`)
 - [ ] Reward files are copied to `supabase/seed-files/rewards/low-tide/`
-      (gitignored); confirm they land in the private `rewards` bucket
+      (gitignored); confirm they land in the private `rewards` bucket.
+      They only exist in the original Windows checkout (`public/rewards/`);
+      a fresh clone has none. Expected names, per `supabase/seed.sql`:
+      `early-listen.mp3` and `low-tide-extras.zip`
 - [ ] Delete `pre-save-app/public/rewards/` and `pre-save-app/dist/` after the
       bucket upload is confirmed. **Until then `npm run build` still copies the
       reward files into `dist/`: do not deploy a build.**
