@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A pre-save landing page with a per-fan reward vault. Fans unlock rewards (early listen, downloads) through a gate: fan-gate provider redirect (Hypeddit etc.), email confirm, or access code. Each fan gets their own token; reward files are served from a private bucket through short-lived signed URLs. Paid unlocks (Stripe), a self-serve artist dashboard with a router, and a Pro plan are later phases. The product/business plan lives outside the repo; the parent `../README.md` holds the current layout, unlock flows and the phase 1 pending checklist. Keep that README in sync when the flow changes.
 
-The git root is the parent folder (`D:\code\web-development\pre-save`), not `pre-save-app/`. All code, including the backend, lives inside `pre-save-app/`.
+The git root is the parent folder `pre-save/`, not `pre-save-app/`. All code, including the backend, lives inside `pre-save-app/`.
 
 ## Commands
 
@@ -26,7 +26,9 @@ There is no test suite. Verification is `npm run lint` and `npm run build`, plus
 
 The Supabase backend (`supabase/`) is written as code but has never run against a live or local Supabase. Do not start Docker, run `supabase start`, or install the Supabase CLI or other global tools unless asked. Write the code and leave TODOs for steps that need a running service; the user wires services separately.
 
-`public/rewards/<key>/` still holds the real reward files, and `npm run build` copies them into `dist/`. **Do not deploy any build** and do not delete `public/rewards/` or `dist/` until the files are confirmed in the private `rewards` bucket (seeded from the gitignored `supabase/seed-files/rewards/`).
+In the original Windows checkout, `public/rewards/<key>/` still holds the real reward files, and `npm run build` copies them into `dist/`. **Do not deploy any build** and do not delete `public/rewards/` or `dist/` until the files are confirmed in the private `rewards` bucket (seeded from the gitignored `supabase/seed-files/rewards/`).
+
+The reward files are not in other checkouts: `public/rewards/` and `supabase/seed-files/rewards/` are gitignored, so a fresh clone has neither. Copy them from the Windows checkout into `supabase/seed-files/rewards/low-tide/` as `early-listen.mp3` and `low-tide-extras.zip` (the paths `supabase/seed.sql` expects).
 
 ## Architecture
 
